@@ -78,7 +78,7 @@ EOF
 info "Building list of installed PHP packages and determining new packages to install"
 PHP_NO_V_PKGS=$(apt-cache policy php* | grep -v "Installed: (none)" \
             | grep "Installed:" -B1 | grep "^php-" | grep -v 'php-mysql' \
-            | sed "s|:||g")
+            | grep -v 'php-common' | sed "s|:||g")
 OLD_PKGS=$(apt-cache policy php${DEB_PHP_V}* | grep -v "Installed: (none)" \
             | grep "Installed:" -B1 | grep "^php${DEB_PHP_V}" | sed 's|:||'g)
 
@@ -108,11 +108,6 @@ cd -
 rm -rf /tmp/$PKG
 
 info "Installing PHP${PHP_V} packages"
-PHP_NO_V_PKGS=$(apt-cache policy php* | grep -v "Installed: (none)" \
-            | grep "Installed:" -B1 | grep "^php-" | grep -v 'php-mysql' \
-            | grep -v 'php-common' | sed "s|:||g")
-OLD_PKGS=$(apt-cache policy php${DEB_PHP_V}* | grep -v "Installed: (none)" \
-            | grep "Installed:" -B1 | grep "^php${DEB_PHP_V}" | sed 's|:||'g)
 NEW_PKGS=$(echo $OLD_PKGS | sed "s|${DEB_PHP_V}|${PHP_V}|g")
 apt-get install php${PHP_V} $NEW_PKGS -y
 
