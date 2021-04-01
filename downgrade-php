@@ -1,0 +1,126 @@
+#!/bin/bash -e
+
+[[ -z "$DEBUG" ]] | set -x
+
+green_bold=$(tput bold; tput setaf 2)
+reset=$(tput sgr0)
+
+info() { echo "${green_bold}INFO: ${@}${reset}"; }
+
+PHP_V=${PHP_V:-7.2}
+CODENAME=${CODENAME:-$(lsb_release -sc)}
+DEB_PHP_V=${DEB_PHP_V:-7.3}
+
+SOURCES_LIST=/etc/apt/sources.list.d
+
+# Use 3rd party sury.org repo
+
+info "Installing support for https apt repo"
+PKGS="lsb-release ca-certificates"
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y $PKGS
+
+info "Downloading keyfile"
+keyfile=/usr/share/keyrings/php-sury.org.gpg
+wget -O $keyfile https://packages.sury.org/php/apt.gpg
+
+info "Creating sources.list file"
+cat > $SOURCES_LIST/php.list <<EOF
+# DEB.SURY.ORG repo for php
+
+deb [signed-by=$keyfile] https://packages.sury.org/php/ $CODENAME main
+EOF
+
+info "Pinning sury.org"
+cat > /etc/apt/preferences.d/php-sury.pref <<EOF
+Package: *
+Pin: origin packages.sury.org
+Pin-Priority: 10
+
+Package: php${PHP_V}-*
+Pin: origin packages.sury.org
+Pin-Priority: 550
+
+Package: libapache2-mod-php${PHP_V}
+Pin: origin packages.sury.org
+Pin-Priority: 550
+
+Package: libpcre3
+Pin: origin packages.sury.org
+Pin-Priority: 550
+
+Package: libzip4
+Pin: origin packages.sury.org
+Pin-Priority: 550
+
+# only enable below if using latest php version
+#Package: php-common
+#Pin: origin packages.sury.org
+#Pin-Priority: 550
+
+#Package: php-pear
+#Pin: origin packages.sury.org
+#Pin-Priority: 550
+
+#Package: php-imagick
+#Pin: origin packages.sury.org
+#Pin-Priority: 550
+
+#Package: php-redis
+#Pin: origin packages.sury.org
+#Pin-Priority: 550
+
+#Package: php-igbinary
+#Pin: origin packages.sury.org
+#Pin-Priority: 550
+EOF
+
+info "Building list of installed PHP packages and determining new packages to install"
+PHP_NO_V_PKGS=$(apt-cache policy php* | grep -v "Installed: (none)" \
+            | grep "Installed:" -B1 | grep "^php-" | grep -v 'php-mysql' \
+            | sed "s|:||g")
+OLD_PKGS=$(apt-cache policy php${DEB_PHP_V}* | grep -v "Installed: (none)" \
+            | grep "Installed:" -B1 | grep "^php${DEB_PHP_V}" | sed 's|:||'g)
+
+
+info "Building and installing dummy php-mysql package that depends on PHP${PHP_V} (workaround adminer dependency)"
+PKG=php-mysql
+cd /tmp
+mkdir -p /tmp/$PKG/DEBIAN
+cat > /tmp/$PKG/DEBIAN/control <<EOF
+Package: php-mysql
+Version: 1.0
+Section: custom
+Priority: optional
+Architecture: all
+Essential: no
+Depends: php${PHP_V}-mysql
+Installed-Size: 1024
+Maintainer: Jeremy Davis <jeremy@turnkeylinux.org>
+Description: Dummy Package to allow Adminer to install cleanly without Debian php-mysql package.
+EOF
+
+apt-get update
+dpkg-deb --build $PKG
+apt-get install ./php-mysql.deb -y --allow-downgrades --autoremove
+apt-mark hold php-mysql=1.0
+cd -
+rm -rf /tmp/$PKG
+
+info "Installing PHP${PHP_V} packages"
+PHP_NO_V_PKGS=$(apt-cache policy php* | grep -v "Installed: (none)" \
+            | grep "Installed:" -B1 | grep "^php-" | grep -v 'php-mysql' \
+            | grep -v 'php-common' | sed "s|:||g")
+OLD_PKGS=$(apt-cache policy php${DEB_PHP_V}* | grep -v "Installed: (none)" \
+            | grep "Installed:" -B1 | grep "^php${DEB_PHP_V}" | sed 's|:||'g)
+NEW_PKGS=$(echo $OLD_PKGS | sed "s|${DEB_PHP_V}|${PHP_V}|g")
+apt-get install php${PHP_V} $NEW_PKGS -y
+
+info "Cleaning up old PHP${DEB_PHP_V} packages."
+apt-get purge -y $PHP_NO_V_PKGS $OLD_PKGS
+
+info "Enable PHP${PHP_V} & restarting Apache"
+a2enmod php${PHP_V}
+systemctl restart apache2
+
+info "Done"
